@@ -34,20 +34,30 @@ def extrair_letras_unicas(linhas):
 
 def processar_linhas_filtradas(linhas, letras_selecionadas):
     dados = []
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+([A-ZÀ-ÿ\s\-]+)\s+(\d{8})', re.IGNORECASE)
     for linha in linhas:
-        match = padrao.search(linha)
-        if match:
-            sequencia, letras, br, endereco, bairro, cep = match.groups()
-            if letras in letras_selecionadas:
-                dados.append({
-                    'sequencia': sequencia,
-                    'letras': letras,
-                    'br': br,
-                    'endereco': endereco,
-                    'bairro': bairro.strip(),
-                    'cep': cep
-                })
+        if not any(letra in linha for letra in letras_selecionadas):
+            continue
+        partes = linha.strip().split()
+        if len(partes) >= 7:
+            try:
+                sequencia = partes[0]
+                letras = partes[1]
+                br = partes[2]
+                cep = partes[-2]
+                cidade = partes[-1]
+                bairro = partes[-3]
+                endereco = " ".join(partes[3:-3])
+                if letras in letras_selecionadas and cidade.lower() == 'itabuna':
+                    dados.append({
+                        'sequencia': sequencia,
+                        'letras': letras,
+                        'br': br,
+                        'endereco': endereco,
+                        'bairro': bairro,
+                        'cep': cep
+                    })
+            except Exception as e:
+                continue
     return pd.DataFrame(dados)
 
 def geocode_with_retry(geolocator, address, retries=3):

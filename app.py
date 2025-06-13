@@ -208,7 +208,7 @@ if uploaded_file:
                     st.download_button(
                         label="Baixar rota otimizada (CSV)",
                         data=arquivo_csv,
-                        file_name=f"rota_{cidade.lower()}_{time.strftime('%Y%m%d_%H%M')}.csv",
+                        file_name=f"rota_otimizada_{time.strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv"
                     )
 

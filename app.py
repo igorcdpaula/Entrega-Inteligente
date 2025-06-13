@@ -17,23 +17,24 @@ def extrair_linhas_pdf(arquivo):
     with pdfplumber.open(arquivo) as pdf:
         for pagina in pdf.pages:
             texto = pagina.extract_text()
-            for linha in texto.split("\n"):
-                linhas.append(linha)
+            if texto:
+                for linha in texto.split("\n"):
+                    linhas.append(linha.strip())
     return linhas
 
 def extrair_letras_unicas(linhas):
     letras_set = set()
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(\w[\w\s]*)\s+(\d{8})\s+Itabuna$', re.IGNORECASE)
+    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)', re.IGNORECASE)
     for linha in linhas:
         match = padrao.search(linha)
         if match:
-            _, letras, _, _, _, _ = match.groups()
+            _, letras, _ = match.groups()
             letras_set.add(letras)
     return sorted(list(letras_set))
 
 def processar_linhas_filtradas(linhas, letras_selecionadas):
     dados = []
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(\w[\w\s]*)\s+(\d{8})\s+Itabuna$', re.IGNORECASE)
+    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+([A-ZÀ-ÿ\s\-]+)\s+(\d{8})', re.IGNORECASE)
     for linha in linhas:
         match = padrao.search(linha)
         if match:
@@ -44,7 +45,7 @@ def processar_linhas_filtradas(linhas, letras_selecionadas):
                     'letras': letras,
                     'br': br,
                     'endereco': endereco,
-                    'bairro': bairro,
+                    'bairro': bairro.strip(),
                     'cep': cep
                 })
     return pd.DataFrame(dados)
@@ -136,24 +137,23 @@ if uploaded_file and cidade:
     with st.spinner("Lendo o PDF e extraindo códigos LETRAS..."):
         linhas = extrair_linhas_pdf(uploaded_file)
         letras_unicas = extrair_letras_unicas(linhas)
-        
+
         if not letras_unicas:
             st.error("Não foi possível identificar códigos LETRAS. Verifique o formato do PDF.")
             st.stop()
-        
+
         letras_selecionadas = st.multiselect("Selecione os códigos LETRAS a serem incluídos:", letras_unicas)
-        
+
         if not letras_selecionadas:
             st.warning("Selecione pelo menos um código LETRAS para continuar.")
             st.stop()
-        
+
         df = processar_linhas_filtradas(linhas, letras_selecionadas)
-        
+
         if df.empty:
             st.error("Nenhum registro encontrado para as LETRAS selecionadas.")
             st.stop()
-        
-        # Remover duplicatas antes da geocodificação
+
         df.drop_duplicates(subset=['endereco', 'bairro'], inplace=True)
         st.subheader("Dados filtrados para geocodificação")
         st.dataframe(df)
@@ -168,42 +168,39 @@ if uploaded_file and cidade:
             df = df.dropna(subset=['latitude', 'longitude']).reset_index(drop=True)
             localizados = len(df)
             descartados = total - localizados
-            
+
             st.success(f"Geocodificação concluída: {localizados} localizados, {descartados} descartados.")
-            
+
             if latitude_manual != 0.0 and longitude_manual != 0.0:
                 origem = (latitude_manual, longitude_manual)
             else:
                 st.warning("Insira manualmente sua latitude e longitude caso o navegador não capture.")
                 origem = None
-            
+
             if origem:
                 pontos = [origem] + list(zip(df['latitude'], df['longitude']))
                 matriz = criar_matriz_distancias(pontos)
                 rota_otima = resolver_rota(matriz)
-                
+
                 if rota_otima:
-                    rota_otima = rota_otima[1:]  # Remove a origem da rota final
+                    rota_otima = rota_otima[1:]
                     df['ordem'] = -1
                     for ordem, posicao in enumerate(rota_otima):
                         df.loc[posicao - 1, 'ordem'] = ordem
                     df = df.sort_values(by='ordem').reset_index(drop=True)
                     st.success("Rota otimizada gerada!")
 
-                    # Exportar CSV
                     arquivo_csv = gerar_arquivo_rota(df)
                     st.download_button(
-                        label="📥 Baixar rota otimizada (CSV)",
+                        label="\ud83d\udcc5 Baixar rota otimizada (CSV)",
                         data=arquivo_csv,
-                        file_name="rota_otimizada.csv",
+                        file_name=f"rota_{cidade.lower()}_{time.strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv"
                     )
 
-                    # Mostrar rota
                     st.subheader("Visualização da Rota Otimizada")
                     st.dataframe(df[['ordem', 'sequencia', 'endereco', 'bairro', 'latitude', 'longitude']])
 
-                    # Mapa dos pontos
                     st.subheader("Mapa dos pontos geocodificados")
                     st.map(df[['latitude', 'longitude']])
                 else:

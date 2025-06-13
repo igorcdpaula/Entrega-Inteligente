@@ -24,19 +24,17 @@ def extrair_linhas_pdf(arquivo):
 
 def extrair_letras_unicas(linhas):
     letras_set = set()
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)', re.IGNORECASE)
     for linha in linhas:
-        match = padrao.search(linha)
-        if match:
-            _, letras, _ = match.groups()
-            letras_set.add(letras)
+        partes = linha.strip().split()
+        if len(partes) >= 3:
+            letras = partes[1]
+            if letras.startswith("A-"):
+                letras_set.add(letras)
     return sorted(list(letras_set))
 
 def processar_linhas_filtradas(linhas, letras_selecionadas):
     dados = []
     for linha in linhas:
-        if not any(letra in linha for letra in letras_selecionadas):
-            continue
         partes = linha.strip().split()
         if len(partes) >= 7:
             try:
@@ -56,7 +54,7 @@ def processar_linhas_filtradas(linhas, letras_selecionadas):
                         'bairro': bairro,
                         'cep': cep
                     })
-            except Exception as e:
+            except Exception:
                 continue
     return pd.DataFrame(dados)
 
@@ -80,8 +78,9 @@ def geocodificar_enderecos(df, cidade):
         else:
             latitudes.append(None)
             longitudes.append(None)
-        progress = (index + 1) / len(df)
-        st.progress(progress, text=f"Geocodificando {index + 1} de {len(df)}")
+        if len(df) > 0:
+            progress = min(1.0, (index + 1) / len(df))
+            st.progress(progress, text=f"Geocodificando {index + 1} de {len(df)}")
         time.sleep(1)
     df['latitude'] = latitudes
     df['longitude'] = longitudes

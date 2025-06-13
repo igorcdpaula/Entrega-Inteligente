@@ -43,9 +43,8 @@ def processar_linhas_filtradas(linhas, letras_selecionadas):
                 br = partes[2]
                 cep = partes[-2]
                 cidade = partes[-1]
-                bairro = partes[-3]
-                endereco = " ".join(partes[3:-3])
-                if letras in letras_selecionadas and cidade.lower() == 'itabuna':
+                endereco_formatado = f"{endereco}, {bairro}, {cidade}, {cep}"
+                if letras in letras_selecionadas:
                     endereco_formatado = f"{endereco}, {bairro}, {cidade}, {cep}"
                     dados.append({
                         'sequencia': sequencia,
@@ -142,9 +141,9 @@ st.set_page_config(page_title="Roteirizador de Entregas Mobile", layout="centere
 st.title("Roteirizador de Entregas Mobile")
 
 uploaded_file = st.file_uploader("Envie o arquivo PDF do romaneio:", type=["pdf"])
-cidade = st.selectbox("Selecione a cidade:", ["Itabuna", "Ilhéus"])
+# cidade removida, extraída diretamente do PDF
 
-if uploaded_file and cidade:
+if uploaded_file:
     with st.spinner("Lendo o PDF e extraindo códigos LETRAS..."):
         linhas = extrair_linhas_pdf(uploaded_file)
         letras_unicas = extrair_letras_unicas(linhas)

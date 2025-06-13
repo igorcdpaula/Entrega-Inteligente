@@ -24,30 +24,44 @@ def extrair_linhas_pdf(arquivo):
 
 def extrair_letras_unicas(linhas):
     letras_set = set()
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(.+?)\s+(\d{8})\s+Itabuna$', re.IGNORECASE)
+    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(.+?)\s+(\d{8})\s+(.+)$', re.IGNORECASE)
     for linha in linhas:
         match = padrao.search(linha)
         if match:
-            _, letras, _, _, _, _ = match.groups()
+            _, letras, _, _, _, _, _ = match.groups()
             letras_set.add(letras)
     return sorted(list(letras_set))
 
+def limpar_endereco(endereco):
+    padroes_remover = [
+        r'(?i)pr[oó]ximo\s+a?\s*', r'(?i)ao?\s+lado\s+de', r'(?i)em\s+frente\s+a?',
+        r'(?i)ponto\s+de\s+refer[êe]ncia:?', r'(?i)fundos', r'(?i)bloco\s+\w+',
+        r'(?i)apto\.?\s*\d*', r'(?i)andar\s*\d*', r'(?i)lote\s*\d*', r'(?i)quadra\s*\d*'
+    ]
+    endereco_limpo = endereco
+    for padrao in padroes_remover:
+        endereco_limpo = re.sub(padrao, '', endereco_limpo)
+    endereco_limpo = re.sub(r'\s{2,}', ' ', endereco_limpo).strip(',; ').strip()
+    return endereco_limpo
+
 def processar_linhas_filtradas(linhas, letras_selecionadas):
     dados = []
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(.+?)\s+(\d{8})\s+Itabuna$', re.IGNORECASE)
+    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(.+?)\s+(\d{8})\s+(.+)$', re.IGNORECASE)
     for linha in linhas:
         match = padrao.search(linha)
         if match:
-            sequencia, letras, br, endereco, bairro, cep = match.groups()
+            sequencia, letras, br, endereco, bairro, cep, cidade = match.groups()
             if letras in letras_selecionadas:
-                endereco_formatado = f"{endereco}, {bairro}, Itabuna, {cep}"
+                endereco_puro = limpar_endereco(endereco)
+                endereco_formatado = f"{endereco_puro}, {bairro}, {cidade}, {cep}"
                 dados.append({
                     'sequencia': sequencia,
                     'letras': letras,
                     'br': br,
-                    'endereco': endereco,
+                    'endereco': endereco_puro,
                     'bairro': bairro,
                     'cep': cep,
+                    'cidade': cidade,
                     'endereco_formatado': endereco_formatado
                 })
     return pd.DataFrame(dados)
@@ -134,9 +148,8 @@ st.set_page_config(page_title="Roteirizador de Entregas Mobile", layout="centere
 st.title("Roteirizador de Entregas Mobile")
 
 uploaded_file = st.file_uploader("Envie o arquivo PDF do romaneio:", type=["pdf"])
-cidade = st.selectbox("Selecione a cidade:", ["Itabuna", "Ilhéus"])
 
-if uploaded_file and cidade:
+if uploaded_file:
     with st.spinner("Lendo o PDF e extraindo códigos LETRAS..."):
         linhas = extrair_linhas_pdf(uploaded_file)
         letras_unicas = extrair_letras_unicas(linhas)
@@ -201,7 +214,7 @@ if uploaded_file and cidade:
                     st.download_button(
                         label="Baixar rota otimizada (CSV)",
                         data=arquivo_csv,
-                        file_name=f"rota_{cidade.lower()}_{time.strftime('%Y%m%d_%H%M')}.csv",
+                        file_name=f"rota_{time.strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv"
                     )
 

@@ -1,1 +1,8 @@
 Add requirements.txt with necessary dependencies
+streamlit
+pdfplumber
+pandas
+numpy
+geopy
+haversine
+ortools

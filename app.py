@@ -1,16 +1,30 @@
+# Roteirizador de Entregas Mobile com correções
 import streamlit as st
 import pdfplumber
 import re
 import pandas as pd
 import time
-import numpy as np
 import io
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from haversine import haversine, Unit
 
-# --- Funções ---
+# --- Funções auxiliares ---
+def normalizar_letras(letras):
+    return re.sub(r'\s+', '', letras.strip().upper())
+
+def limpar_endereco(endereco):
+    padroes_remover = [
+        r'(?i)pr[oó]ximo\s+a?\s*', r'(?i)ao?\s+lado\s+de', r'(?i)em\s+frente\s+a?',
+        r'(?i)ponto\s+de\s+refer[\u00ea\u00e9]ncia:?', r'(?i)fundos', r'(?i)bloco\s+\w+',
+        r'(?i)apto\.?\s*\d*', r'(?i)andar\s*\d*', r'(?i)lote\s*\d*', r'(?i)quadra\s*\d*'
+    ]
+    endereco_limpo = endereco
+    for padrao in padroes_remover:
+        endereco_limpo = re.sub(padrao, '', endereco_limpo)
+    endereco_limpo = re.sub(r'\s{2,}', ' ', endereco_limpo).strip(',; ').strip()
+    return endereco_limpo
 
 def extrair_linhas_pdf(arquivo):
     linhas = []
@@ -22,48 +36,25 @@ def extrair_linhas_pdf(arquivo):
                     linhas.append(linha.strip())
     return linhas
 
-def extrair_letras_unicas(linhas):
-    letras_set = set()
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(.+?)\s+(\d{8})\s+(.+)$', re.IGNORECASE)
-    for linha in linhas:
-        match = padrao.search(linha)
-        if match:
-            _, letras, _, _, _, _, _ = match.groups()
-            letras_set.add(letras)
-    return sorted(list(letras_set))
-
-def limpar_endereco(endereco):
-    padroes_remover = [
-        r'(?i)pr[oó]ximo\s+a?\s*', r'(?i)ao?\s+lado\s+de', r'(?i)em\s+frente\s+a?',
-        r'(?i)ponto\s+de\s+refer[êe]ncia:?', r'(?i)fundos', r'(?i)bloco\s+\w+',
-        r'(?i)apto\.?\s*\d*', r'(?i)andar\s*\d*', r'(?i)lote\s*\d*', r'(?i)quadra\s*\d*'
-    ]
-    endereco_limpo = endereco
-    for padrao in padroes_remover:
-        endereco_limpo = re.sub(padrao, '', endereco_limpo)
-    endereco_limpo = re.sub(r'\s{2,}', ' ', endereco_limpo).strip(',; ').strip()
-    return endereco_limpo
-
-def processar_linhas_filtradas(linhas, letras_selecionadas):
+def extrair_linhas_dados(linhas):
     dados = []
-    padrao = re.compile(r'^(\d+)\s+(A-\d+)\s+(BR\w+)\s+(.+?)\s+(.+?)\s+(\d{8})\s+(.+)$', re.IGNORECASE)
+    padrao = re.compile(r'^(\d+)?\s+(A\s*-\s*\d+)\s+(BR\w+)\s+(.+?)\s+([\w\s\u00e3çêó.,/-]+)\s+(\d{8})\s+(Itabuna)', re.IGNORECASE)
     for linha in linhas:
         match = padrao.search(linha)
         if match:
             sequencia, letras, br, endereco, bairro, cep, cidade = match.groups()
-            if letras in letras_selecionadas:
-                endereco_puro = limpar_endereco(endereco)
-                endereco_formatado = f"{endereco_puro}, {bairro}, {cidade}, {cep}"
-                dados.append({
-                    'sequencia': sequencia,
-                    'letras': letras,
-                    'br': br,
-                    'endereco': endereco_puro,
-                    'bairro': bairro,
-                    'cep': cep,
-                    'cidade': cidade,
-                    'endereco_formatado': endereco_formatado
-                })
+            letras_norm = normalizar_letras(letras)
+            dados.append({
+                'sequencia': sequencia or '',
+                'letras': letras.strip(),
+                'letras_norm': letras_norm,
+                'br': br.strip(),
+                'endereco': limpar_endereco(endereco),
+                'bairro': bairro.strip(),
+                'cep': cep,
+                'cidade': cidade.strip(),
+                'endereco_formatado': f"{limpar_endereco(endereco)}, {bairro.strip()}, {cidade.strip()}, {cep}"
+            })
     return pd.DataFrame(dados)
 
 def geocode_with_retry(geolocator, address, retries=3):
@@ -77,7 +68,7 @@ def geocode_with_retry(geolocator, address, retries=3):
 def geocodificar_enderecos(df):
     geolocator = Nominatim(user_agent="roteirizador")
     latitudes, longitudes = [], []
-    for idx, (_, row) in enumerate(df.iterrows()):
+    for idx, row in df.iterrows():
         endereco_completo = row['endereco_formatado'] + ", Bahia, Brasil"
         location = geocode_with_retry(geolocator, endereco_completo)
         if location:
@@ -140,44 +131,35 @@ def gerar_arquivo_rota(df):
     export_df = df[['Nome', 'latitude', 'longitude']]
     output = io.StringIO()
     export_df.to_csv(output, index=False, encoding='utf-8-sig')
-    processed_data = output.getvalue().encode("utf-8")
-    return processed_data
+    return output.getvalue().encode("utf-8")
 
-# --- APP ---
+# --- App Streamlit ---
 st.set_page_config(page_title="Roteirizador de Entregas Mobile", layout="centered")
 st.title("Roteirizador de Entregas Mobile")
 
 uploaded_file = st.file_uploader("Envie o arquivo PDF do romaneio:", type=["pdf"])
 
 if uploaded_file:
-    with st.spinner("Lendo o PDF e extraindo códigos LETRAS..."):
-        linhas = extrair_linhas_pdf(uploaded_file)
-        letras_unicas = extrair_letras_unicas(linhas)
+    linhas = extrair_linhas_pdf(uploaded_file)
+    df_dados = extrair_linhas_dados(linhas)
 
-        if not letras_unicas:
-            st.error("Não foi possível identificar códigos LETRAS. Verifique o formato do PDF.")
-            st.stop()
+    if df_dados.empty:
+        st.error("Nenhum dado encontrado no PDF com o padrão esperado.")
+        st.stop()
 
-        letras_selecionadas = st.multiselect("Selecione os códigos LETRAS a serem incluídos:", letras_unicas)
+    letras_unicas = sorted(df_dados['letras_norm'].unique())
+    letras_selecionadas = st.multiselect("Selecione os códigos LETRAS a serem incluídos:", letras_unicas)
 
-        if not letras_selecionadas:
-            st.warning("Selecione pelo menos um código LETRAS para continuar.")
-            st.stop()
-
-        df = processar_linhas_filtradas(linhas, letras_selecionadas)
-
-        if df.empty:
-            st.error("Nenhum registro encontrado para as LETRAS selecionadas.")
-            st.stop()
+    if letras_selecionadas:
+        df = df_dados[df_dados['letras_norm'].isin(letras_selecionadas)].copy()
 
         st.subheader("Dados filtrados para geocodificação")
         st.dataframe(df)
 
-    latitude_manual = st.number_input("Sua latitude (se não capturado automaticamente)", format="%f", value=-14.768865)
-    longitude_manual = st.number_input("Sua longitude (se não capturado automaticamente)", format="%f", value=-39.255508)
+        latitude_manual = st.number_input("Sua latitude", format="%f", value=-14.768865)
+        longitude_manual = st.number_input("Sua longitude", format="%f", value=-39.255508)
 
-    if st.button("Gerar rota otimizada"):
-        with st.spinner("Geocodificando endereços..."):
+        if st.button("Gerar rota otimizada"):
             df = geocodificar_enderecos(df)
             total = len(df)
             df = df.dropna(subset=['latitude', 'longitude']).reset_index(drop=True)
@@ -186,30 +168,20 @@ if uploaded_file:
 
             st.success(f"Geocodificação concluída: {localizados} localizados, {descartados} descartados.")
 
-            end_falhos = df[df['latitude'].isna()][['sequencia', 'endereco_formatado']]
-            if not end_falhos.empty:
-                st.subheader("Endereços não geocodificados")
-                st.dataframe(end_falhos)
-
             if latitude_manual != 0.0 and longitude_manual != 0.0:
                 origem = (latitude_manual, longitude_manual)
-            else:
-                st.warning("Insira manualmente sua latitude e longitude caso o navegador não capture.")
-                origem = None
-
-            if origem:
                 pontos = [origem] + list(zip(df['latitude'], df['longitude']))
                 matriz = criar_matriz_distancias(pontos)
                 rota_otima = resolver_rota(matriz)
 
                 if rota_otima:
-                    rota_otima = rota_otima[1:]
+                    rota_otima = rota_otima[1:]  # remover origem
                     df['ordem'] = -1
                     for ordem, posicao in enumerate(rota_otima):
                         df.loc[posicao - 1, 'ordem'] = ordem
                     df = df.sort_values(by='ordem').reset_index(drop=True)
-                    st.success("Rota otimizada gerada!")
 
+                    st.success("Rota otimizada gerada!")
                     arquivo_csv = gerar_arquivo_rota(df)
                     st.download_button(
                         label="Baixar rota otimizada (CSV)",
@@ -224,4 +196,4 @@ if uploaded_file:
                     st.subheader("Mapa dos pontos geocodificados")
                     st.map(df[['latitude', 'longitude']])
                 else:
-                    st.error("Não foi possível gerar a rota. Tente novamente.")
+                    st.error("Não foi possível gerar a rota.")
